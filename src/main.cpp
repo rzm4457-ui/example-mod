@@ -1,100 +1,108 @@
-/**
- * Include the Geode headers.
- */
 #include <Geode/Geode.hpp>
+#include <Geode/modify/GJBaseGameLayer.hpp>
+#include <Geode/modify/PlayLayer.hpp>
 
-/**
- * Brings cocos2d and all Geode namespaces to the current scope.
- */
 using namespace geode::prelude;
 
-/**
- * `$modify` lets you extend and modify GD's classes.
- * To hook a function in Geode, simply $modify the class
- * and write a new function definition with the signature of
- * the function you want to hook.
- *
- * Here we use the overloaded `$modify` macro to set our own class name,
- * so that we can use it for button callbacks.
- *
- * Notice the header being included, you *must* include the header for
- * the class you are modifying, or you will get a compile error.
- *
- * Another way you could do this is like this:
- *
- * struct MyMenuLayer : Modify<MyMenuLayer, MenuLayer> {};
- */
-#include <Geode/modify/MenuLayer.hpp>
-class $modify(MyMenuLayer, MenuLayer) {
-	/**
-	 * Typically classes in GD are initialized using the `init` function, (though not always!),
-	 * so here we use it to add our own button to the bottom menu.
-	 *
-	 * Note that for all hooks, your signature has to *match exactly*,
-	 * `void init()` would not place a hook!
-	*/
-	bool init() {
-		/**
-		 * We call the original init function so that the
-		 * original class is properly initialized.
-		 */
-		if (!MenuLayer::init()) {
-			return false;
-		}
+struct BufferedClick {
+    bool active = false;
+    bool releaseQueued = false;
+    bool releaseNext = false;
+    int ticksLeft = 0;
+    int button = 1;
+};
 
-		/**
-		 * You can use methods from the `geode::log` namespace to log messages to the console,
-		 * being useful for debugging and such. See this page for more info about logging:
-		 * https://docs.geode-sdk.org/tutorials/logging
-		*/
-		log::debug("Hello from my MenuLayer::init hook! This layer has {} children.", this->getChildrenCount());
+static BufferedClick g_buf[2];
+static bool g_replaying = false;
 
-		/**
-		 * See this page for more info about buttons
-		 * https://docs.geode-sdk.org/tutorials/buttons
-		*/
-		auto myButton = CCMenuItemSpriteExtra::create(
-			CCSprite::createWithSpriteFrameName("GJ_likeBtn_001.png"),
-			this,
-			/**
-			 * Here we use the name we set earlier for our modify class.
-			*/
-			menu_selector(MyMenuLayer::onMyButton)
-		);
+static bool canActNow(PlayerObject* p) {
+    if (!p) return true;
+    if (p->m_isShip || p->m_isBird || p->m_isDart || p->m_isSwing) return true;
+    if (p->m_isOnGround) return true;
+    if (p->m_touchingRings && p->m_touchingRings->count() > 0) return true;
+    return false;
+}
 
-		/**
-		 * Here we access the `bottom-menu` node by its ID, and add our button to it.
-		 * Node IDs are a Geode feature, see this page for more info about it:
-		 * https://docs.geode-sdk.org/tutorials/nodetree
-		*/
-		auto menu = this->getChildByID("bottom-menu");
-		menu->addChild(myButton);
+static void clearBuffers() {
+    g_buf[0] = BufferedClick();
+    g_buf[1] = BufferedClick();
+}
 
-		/**
-		 * The `_spr` string literal operator just prefixes the string with
-		 * your mod id followed by a slash. This is good practice for setting your own node ids.
-		*/
-		myButton->setID("my-button"_spr);
+class $modify(BufferGameLayer, GJBaseGameLayer) {
+    void handleButton(bool down, int button, bool isPlayer1) {
+        auto pl = PlayLayer::get();
+        auto mod = Mod::get();
+        int ticks = mod->getSettingValue<int64_t>("buffer-ticks");
 
-		/**
-		 * We update the layout of the menu to ensure that our button is properly placed.
-		 * This is yet another Geode feature, see this page for more info about it:
-		 * https://docs.geode-sdk.org/tutorials/layouts
-		*/
-		menu->updateLayout();
+        if (g_replaying || !pl || static_cast<GJBaseGameLayer*>(pl) != this ||
+            !mod->getSettingValue<bool>("enabled") || ticks <= 0 || button != 1) {
+            GJBaseGameLayer::handleButton(down, button, isPlayer1);
+            return;
+        }
 
-		/**
-		 * We return `true` to indicate that the class was properly initialized.
-		 */
-		return true;
-	}
+        auto player = isPlayer1 ? m_player1 : m_player2;
+        auto& b = g_buf[isPlayer1 ? 0 : 1];
 
-	/**
-	 * This is the callback function for the button we created earlier.
-	 * The signature for button callbacks must always be the same,
-	 * return type `void` and taking a `CCObject*`.
-	*/
-	void onMyButton(CCObject*) {
-		FLAlertLayer::create("Geode", "Hello from my custom mod!", "OK")->show();
-	}
+        if (down) {
+            if (canActNow(player)) {
+                b = BufferedClick();
+                GJBaseGameLayer::handleButton(down, button, isPlayer1);
+            } else {
+                b.active = true;
+                b.releaseQueued = false;
+                b.releaseNext = false;
+                b.ticksLeft = ticks;
+                b.button = button;
+            }
+        } else {
+            if (b.active) {
+                b.releaseQueued = true;
+            } else {
+                GJBaseGameLayer::handleButton(down, button, isPlayer1);
+            }
+        }
+    }
+
+    void processCommands(float dt) {
+        auto pl = PlayLayer::get();
+        if (pl && static_cast<GJBaseGameLayer*>(pl) == this &&
+            Mod::get()->getSettingValue<bool>("enabled")) {
+            for (int i = 0; i < 2; i++) {
+                auto& b = g_buf[i];
+                bool isP1 = (i == 0);
+                auto player = isP1 ? m_player1 : m_player2;
+
+                if (b.releaseNext) {
+                    g_replaying = true;
+                    GJBaseGameLayer::handleButton(false, b.button, isP1);
+                    g_replaying = false;
+                    b = BufferedClick();
+                    continue;
+                }
+                if (!b.active) continue;
+
+                if (canActNow(player)) {
+                    g_replaying = true;
+                    GJBaseGameLayer::handleButton(true, b.button, isP1);
+                    g_replaying = false;
+                    if (b.releaseQueued) {
+                        b.active = false;
+                        b.releaseNext = true;
+                    } else {
+                        b = BufferedClick();
+                    }
+                } else if (--b.ticksLeft <= 0) {
+                    b = BufferedClick();
+                }
+            }
+        }
+        GJBaseGameLayer::processCommands(dt);
+    }
+};
+
+class $modify(PlayLayer) {
+    void resetLevel() {
+        clearBuffers();
+        PlayLayer::resetLevel();
+    }
 };
