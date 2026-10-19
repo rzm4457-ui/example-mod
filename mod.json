@@ -1,17 +1,30 @@
 {
-	"geode": "$GEODE_VERSION",
-	"gd": {
-		"win": "2.2081",
-		"android": "2.2081",
-		"mac": "2.2081",
-		"ios": "2.2081"
-	},
-	"id": "$MOD_ID",
-	"name": "$MOD_NAME",
-	"version": "$MOD_VERSION",
-	"developer": "$MOD_DEVELOPER",
-	"description": "$MOD_DESCRIPTION",
-	"dependencies": {
-		"geode.node-ids": ">=v1.23.3"
-	}
+    "geode": "v5.11.2",
+    "gd": {
+        "win": "2.2081",
+        "android": "2.2081",
+        "mac": "2.2081",
+        "ios": "2.2081"
+    },
+    "id": "rzm4457.clickbuffer",
+    "name": "Click Buffer",
+    "version": "v1.0.0",
+    "developer": "rzm4457",
+    "description": "Buffers early clicks and fires them when the timing is right.",
+    "settings": {
+        "enabled": {
+            "type": "bool",
+            "name": "Enabled",
+            "default": true
+        },
+        "buffer-ticks": {
+            "type": "int",
+            "name": "Buffer window (ticks)",
+            "description": "How many physics ticks early a click can be. At 240 TPS, 4 ticks = 1 frame at 60 FPS.",
+            "default": 16,
+            "min": 0,
+            "max": 240,
+            "control": { "input": true, "slider": true }
+        }
+    }
 }
